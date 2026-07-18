@@ -45,7 +45,7 @@ PAPERS_LIBRARY_DIR.mkdir(exist_ok=True)
 
 MAX_UPLOAD_MB = 100
 
-app = Flask(__name__, static_folder=str(APP_ROOT.parent / "frontend"), static_url_path="")
+app = Flask(__name__, static_folder=str(APP_ROOT / "frontend"), static_url_path="")
 
 _secret = os.environ.get("FLASK_SECRET_KEY")
 if not _secret:
