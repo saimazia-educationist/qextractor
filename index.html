@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Question Extractor</title>
+<style>
+  :root {
+    --ink: #1c2430;
+    --paper: #f7f5f0;
+    --line: #d8d3c8;
+    --accent: #2f5d50;
+    --accent-light: #e4ede9;
+    --danger: #a6423a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+  }
+  header { padding: 32px 24px 8px; max-width: 760px; margin: 0 auto; }
+  header h1 { font-size: 1.6rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+  header p { color: #5b6472; margin: 0; font-size: 0.95rem; }
+
+  .tabs {
+    max-width: 760px; margin: 20px auto 0; padding: 0 24px;
+    display: flex; gap: 8px;
+  }
+  .tab {
+    flex: 1; text-align: center; padding: 12px; border-radius: 8px 8px 0 0;
+    background: #ece8de; color: #6b7280; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--line); border-bottom: none; font-size: 0.92rem;
+  }
+  .tab.active { background: #fff; color: var(--ink); }
+
+  main { max-width: 760px; margin: 0 auto; padding: 0 24px 64px; }
+  .panel {
+    background: #fff; border: 1px solid var(--line); border-radius: 0 8px 8px 8px;
+    padding: 26px 26px 30px; display: none;
+  }
+  .panel.active { display: block; }
+
+  .block { margin-top: 22px; }
+  .block:first-child { margin-top: 0; }
+  .block h3 { font-size: 0.95rem; margin: 0 0 4px; }
+  .block p.hint { color: #6b7280; font-size: 0.85rem; margin: 2px 0 12px; }
+
+  .dropzone {
+    border: 2px dashed var(--line); border-radius: 8px; padding: 22px;
+    text-align: center; color: #6b7280; cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .dropzone.drag { border-color: var(--accent); background: var(--accent-light); }
+  .dropzone input { display: none; }
+  .filelist { margin-top: 8px; font-size: 0.85rem; }
+  .filelist div { padding: 2px 0; }
+  .library-list {
+    max-height: 220px; overflow-y: auto; border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 12px;
+  }
+  .library-list label {
+    display: block; font-size: 0.85rem; padding: 6px 2px; cursor: pointer;
+    border-bottom: 1px solid #f0ede5;
+  }
+  .library-list label:last-child { border-bottom: none; }
+  .library-list .meta { color: #8a92a0; font-size: 0.78rem; }
+
+  .dropdown-select { position: relative; }
+  .dropdown-toggle {
+    width: 100%; text-align: left; background: #fff; color: #333;
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+    font: inherit; font-size: 0.85rem; cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .dropdown-toggle .caret { color: #8a92a0; transition: transform .15s; }
+  .dropdown-select.open .dropdown-toggle .caret { transform: rotate(180deg); }
+  .dropdown-panel {
+    display: none;
+    position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20;
+    background: #fff; box-shadow: 0 6px 18px rgba(0,0,0,.1);
+  }
+  .dropdown-select.open .dropdown-panel { display: block; }
+
+  .mode-row, .source-row { display: flex; gap: 18px; margin: 12px 0 4px; font-size: 0.9rem; }
+
+  button {
+    font: inherit; border: none; border-radius: 7px; padding: 10px 18px;
+    cursor: pointer; font-weight: 600; font-size: 0.9rem;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:disabled { background: #a9b8b3; cursor: not-allowed; }
+  .btn-secondary { background: var(--accent-light); color: var(--accent); }
+
+  .papers { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 6px; }
+  .paper-box { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .paper-box h4 { margin: 0 0 6px; font-size: 0.83rem; color: #4a5262; }
+  .paper-box label { display: block; font-size: 0.82rem; padding: 2px 0; cursor: pointer; }
+
+  .status { font-size: 0.87rem; margin-top: 12px; min-height: 1.2em; }
+  .status.error { color: var(--danger); }
+  .status.ok { color: var(--accent); }
+  .spinner {
+    display: inline-block; width: 13px; height: 13px;
+    border: 2px solid #cfd8d5; border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .7s linear infinite; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  hr.sep { border: none; border-top: 1px solid var(--line); margin: 22px 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Question Extractor</h1>
+  <p>Extract A Level questions by topic, or build a custom test.</p>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-tab="extract">Extract Topical Questions</div>
+  <div class="tab" data-tab="test">Create Test</div>
+</div>
+
+<main>
+
+  <!-- ================= EXTRACT PANEL ================= -->
+  <div class="panel active" id="panel-extract">
+    <div class="block">
+      <h3>Where are the question papers coming from?</h3>
+      <div class="source-row">
+        <label><input type="radio" name="extractSource" value="upload" checked> Upload PDFs</label>
+        <label><input type="radio" name="extractSource" value="library"> Choose from paper library</label>
+      </div>
+    </div>
+
+    <div class="block" id="extractUploadBlock">
+      <h3>Upload question papers</h3>
+      <p class="hint">Filenames should follow the CIE format, e.g. 9618_w22_qp_12.pdf</p>
+      <div class="dropzone" id="extractDropzone">
+        Click to choose PDFs, or drag them here
+        <input type="file" id="extractFileInput" accept=".pdf" multiple>
+      </div>
+      <div class="filelist" id="extractFileList"></div>
+    </div>
+
+    <div class="block" id="extractLibraryBlock" style="display:none;">
+      <h3>Choose from the paper library</h3>
+      <p class="hint">Papers already available on the server — no need to have your own copy.</p>
+      <div class="dropdown-select" id="extractLibraryDropdown">
+        <button type="button" class="dropdown-toggle" id="extractLibraryToggle">
+          <span class="toggle-label">Select papers</span><span class="caret">▾</span>
+        </button>
+        <div id="extractLibraryList" class="filelist dropdown-panel"></div>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="mode-row">
+        <label><input type="radio" name="extractMode" value="new" checked> Start new extraction</label>
+        <label><input type="radio" name="extractMode" value="append"> Append to existing</label>
+      </div>
+    </div>
+
+    <div class="block">
+      <button class="btn-primary" id="extractBtn" disabled>Extract questions</button>
+      <button class="btn-secondary" id="downloadExtractedBtn" disabled>Download extracted files (.zip)</button>
+      <div class="status" id="extractStatus"></div>
+    </div>
+  </div>
+
+  <!-- ================= CREATE TEST PANEL ================= -->
+  <div class="panel" id="panel-test">
+
+    <div class="block">
+      <h3>Which paper is this test for?</h3>
+      <select id="paperSelect" style="font:inherit; padding:8px 10px; border-radius:6px; border:1px solid var(--line); width:100%; max-width:260px;">
+        <option value="" selected disabled>— Select a paper —</option>
+        <option value="Paper 1">Paper 1</option>
+        <option value="Paper 2">Paper 2</option>
+        <option value="Paper 3">Paper 3</option>
+        <option value="Paper 4">Paper 4</option>
+      </select>
+    </div>
+
+    <div class="block">
+      <h3>Choose chapters to include</h3>
+      <p class="hint">Leave nothing checked to include every chapter found for this paper.</p>
+      <div id="testPapersChapters"></div>
+    </div>
+
+    <hr class="sep">
+
+    <div class="block" id="testPapersBlock">
+      <h3>Choose question papers</h3>
+
+      <div id="testPdfLibraryBlock" style="margin-top:10px;">
+        <div class="dropdown-select" id="testPdfLibraryDropdown">
+          <button type="button" class="dropdown-toggle" id="testPdfLibraryToggle">
+            <span class="toggle-label">Select papers</span><span class="caret">▾</span>
+          </button>
+          <div id="testPdfLibraryList" class="filelist dropdown-panel"></div>
+        </div>
+      </div>
+
+      <div id="testPdfUploadBlock" style="margin-top:14px;">
+        <div class="dropzone" id="testPdfDropzone">
+          Click to choose PDFs, or drag them here
+          <input type="file" id="testPdfInput" accept=".pdf" multiple>
+        </div>
+        <div class="filelist" id="testPdfList"></div>
+      </div>
+    </div>
+
+    <div class="block">
+      <button class="btn-primary" id="buildBtn" disabled>Build test document</button>
+      <button class="btn-secondary" id="resetTestBtn">Clear</button>
+      <div class="status" id="buildStatus"></div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+const PAPER_NAMES = ["Paper 1", "Paper 2", "Paper 3", "Paper 4"];
+
+/* ---------- Tabs ---------- */
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+/* ---------- Collapsible dropdown checklists (paper library) ---------- */
+function setupDropdown(dropdownId, toggleId, checkboxClass, placeholder) {
+  const dropdown = document.getElementById(dropdownId);
+  const toggle = document.getElementById(toggleId);
+  const label = toggle.querySelector('.toggle-label');
+
+  toggle.addEventListener('click', e => {
+    e.stopPropagation(); // don't let the outside-click listener immediately close what we just opened
+    const willOpen = !dropdown.classList.contains('open');
+    document.querySelectorAll('.dropdown-select.open').forEach(d => d.classList.remove('open')); // only one open at a time
+    if (willOpen) dropdown.classList.add('open');
+  });
+
+  dropdown.updateLabel = () => {
+    const count = dropdown.querySelectorAll(`.${checkboxClass}:checked`).length;
+    label.textContent = count > 0 ? `${count} paper${count === 1 ? '' : 's'} selected` : placeholder;
+  };
+  dropdown.updateLabel();
+}
+
+setupDropdown('extractLibraryDropdown', 'extractLibraryToggle', 'lib-cb-extract', 'Select papers');
+setupDropdown('testPdfLibraryDropdown', 'testPdfLibraryToggle', 'lib-cb-test', 'Select papers');
+
+// Clicking anywhere outside an open dropdown collapses it. Clicks on checkboxes
+// inside the panel are inside `.dropdown-select`, so they don't trigger this.
+document.addEventListener('click', e => {
+  document.querySelectorAll('.dropdown-select.open').forEach(dropdown => {
+    if (!dropdown.contains(e.target)) dropdown.classList.remove('open');
+  });
+});
+
+/* ---------- Chapter checkboxes (per selected paper only) ---------- */
+let chaptersByPaper = {};
+
+function renderChaptersForSelectedPaper() {
+  const paper = document.getElementById('paperSelect').value;
+  const container = document.getElementById('testPapersChapters');
+  if (!paper) {
+    container.innerHTML = '<p class="hint">Select a paper above to see its chapters.</p>';
+  } else {
+    const chapters = chaptersByPaper[paper] || [];
+    if (chapters.length === 0) {
+      container.innerHTML = '<p class="hint">No chapters known for this paper.</p>';
+    } else {
+      container.innerHTML = `
+        <div class="paper-box" style="width:100%;">
+          ${chapters.map(c => `
+            <label><input type="checkbox" class="chapter-cb" value="${c}"> ${c.replace('.docx', '')}</label>
+          `).join('')}
+        </div>`;
+    }
+  }
+  if (paper) {
+    renderLibraryList('testPdfLibraryList', 'lib-cb-test', paper);
+  } else {
+    document.getElementById('testPdfLibraryList').innerHTML = '<p class="hint">Select a paper above to see available papers.</p>';
+  }
+  document.getElementById('testPdfLibraryDropdown').updateLabel();
+  updateBuildBtn();
+}
+
+document.getElementById('paperSelect').addEventListener('change', renderChaptersForSelectedPaper);
+
+async function loadChaptersData() {
+  const res = await fetch('/api/chapters');
+  chaptersByPaper = await res.json();
+  renderChaptersForSelectedPaper(); // shows the "select a paper" placeholder initially
+}
+loadChaptersData();
+
+/* ---------- Generic dropzone wiring ---------- */
+function wireDropzone(zoneId, inputId, listId, accept, onChange) {
+  const zone = document.getElementById(zoneId);
+  const input = document.getElementById(inputId);
+  const list = document.getElementById(listId);
+  let files = [];
+
+  zone.addEventListener('click', () => input.click());
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag');
+    setFiles(e.dataTransfer.files);
+  });
+  input.addEventListener('change', () => setFiles(input.files));
+
+  function setFiles(fileListObj) {
+    files = Array.from(fileListObj).filter(f => f.name.toLowerCase().endsWith(accept));
+    list.innerHTML = files.map(f => `<div>${f.name}</div>`).join('');
+    onChange(files);
+  }
+  return {
+    getFiles: () => files,
+    clear: () => {
+      files = [];
+      list.innerHTML = '';
+      input.value = ''; // reset the actual <input> too, or reselecting the same file won't re-trigger onChange
+      onChange(files);
+    }
+  };
+}
+
+/* ---------- Paper library (shared between both tabs) ---------- */
+let libraryPapers = [];
+
+function renderLibraryList(containerId, checkboxClass, filterPaperLabel) {
+  const container = document.getElementById(containerId);
+  const papers = filterPaperLabel
+    ? libraryPapers.filter(p => p.paper_label === filterPaperLabel)
+    : libraryPapers;
+
+  if (papers.length === 0) {
+    container.innerHTML = '<p class="hint">No papers found.</p>';
+    return;
+  }
+  container.innerHTML = `<div class="library-list">
+    ${papers.map(p => `
+      <label>
+        <input type="checkbox" class="${checkboxClass}" value="${p.filename}">
+        ${p.subject} — ${p.paper_label}
+        <span class="meta">(${p.session}, ${p.filename})</span>
+      </label>
+    `).join('')}
+  </div>`;
+}
+
+async function loadLibrary() {
+  const res = await fetch('/api/library');
+  const data = await res.json();
+  libraryPapers = data.papers || [];
+  renderLibraryList('extractLibraryList', 'lib-cb-extract'); // Extract tab always shows the full library
+  const currentPaper = document.getElementById('paperSelect').value;
+  if (currentPaper) {
+    renderLibraryList('testPdfLibraryList', 'lib-cb-test', currentPaper);
+  } else {
+    document.getElementById('testPdfLibraryList').innerHTML = '<p class="hint">Select a paper above to see available papers.</p>';
+  }
+  document.getElementById('extractLibraryDropdown').updateLabel();
+  document.getElementById('testPdfLibraryDropdown').updateLabel();
+}
+loadLibrary();
+
+/* ---------- Extract panel ---------- */
+const extractZone = wireDropzone('extractDropzone', 'extractFileInput', 'extractFileList', '.pdf', updateExtractBtn);
+
+const extractBtn = document.getElementById('extractBtn');
+const extractStatus = document.getElementById('extractStatus');
+const downloadExtractedBtn = document.getElementById('downloadExtractedBtn');
+
+function getExtractSource() {
+  return document.querySelector('input[name="extractSource"]:checked').value;
+}
+
+function updateExtractBtn() {
+  const source = getExtractSource();
+  const hasFiles = source === 'upload'
+    ? extractZone.getFiles().length > 0
+    : document.querySelectorAll('.lib-cb-extract:checked').length > 0;
+  extractBtn.disabled = !hasFiles;
+}
+
+document.querySelectorAll('input[name="extractSource"]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    const source = getExtractSource();
+    document.getElementById('extractUploadBlock').style.display = source === 'upload' ? 'block' : 'none';
+    document.getElementById('extractLibraryBlock').style.display = source === 'library' ? 'block' : 'none';
+    updateExtractBtn();
+  });
+});
+
+document.getElementById('extractLibraryList').addEventListener('change', e => {
+  if (e.target.classList.contains('lib-cb-extract')) {
+    updateExtractBtn();
+    document.getElementById('extractLibraryDropdown').updateLabel();
+  }
+});
+
+extractBtn.addEventListener('click', async () => {
+  const mode = document.querySelector('input[name="extractMode"]:checked').value;
+  const source = getExtractSource();
+  const formData = new FormData();
+  formData.append('mode', mode);
+
+  if (source === 'upload') {
+    extractZone.getFiles().forEach(f => formData.append('pdfs', f));
+  } else {
+    document.querySelectorAll('.lib-cb-extract:checked').forEach(cb => formData.append('library_files', cb.value));
+  }
+
+  extractBtn.disabled = true;
+  extractStatus.className = 'status';
+  extractStatus.innerHTML = '<span class="spinner"></span>Extracting questions… this can take a while for scanned PDFs.';
+
+  try {
+    const res = await fetch('/api/extract', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Extraction failed.');
+    extractStatus.className = 'status ok';
+    const n = (data.chapters_available || []).length;
+    const cacheNote = data.cache_hits > 0
+      ? ` (${data.cache_hits}/${data.total_files} paper${data.total_files === 1 ? '' : 's'} loaded instantly from cache)`
+      : '';
+    extractStatus.textContent = `Done. ${n} topic file(s) extracted.${cacheNote}`;
+    downloadExtractedBtn.disabled = false;
+  } catch (err) {
+    extractStatus.className = 'status error';
+    extractStatus.textContent = err.message;
+  } finally {
+    extractBtn.disabled = false;
+  }
+});
+
+downloadExtractedBtn.addEventListener('click', () => {
+  window.location.href = '/api/download-extracted';
+});
+
+/* ---------- Create Test panel ---------- */
+document.getElementById('testPdfLibraryList').addEventListener('change', e => {
+  if (e.target.classList.contains('lib-cb-test')) {
+    updateBuildBtn();
+    document.getElementById('testPdfLibraryDropdown').updateLabel();
+  }
+});
+
+const testPdfZone = wireDropzone('testPdfDropzone', 'testPdfInput', 'testPdfList', '.pdf', updateBuildBtn);
+const buildBtn = document.getElementById('buildBtn');
+const buildStatus = document.getElementById('buildStatus');
+
+function updateBuildBtn() {
+  const hasFiles = testPdfZone.getFiles().length > 0
+    || document.querySelectorAll('.lib-cb-test:checked').length > 0;
+  buildBtn.disabled = !hasFiles;
+}
+
+buildBtn.addEventListener('click', async () => {
+  const selectedChapters = Array.from(document.querySelectorAll('.chapter-cb:checked')).map(cb => cb.value);
+
+  const formData = new FormData();
+  formData.append('source', 'papers');
+  selectedChapters.forEach(c => formData.append('chapters', c));
+  testPdfZone.getFiles().forEach(f => formData.append('pdfs', f));
+  document.querySelectorAll('.lib-cb-test:checked').forEach(cb => formData.append('library_files', cb.value));
+
+  buildBtn.disabled = true;
+  buildStatus.className = 'status';
+  buildStatus.innerHTML = '<span class="spinner"></span>Building test document…';
+
+  try {
+    const res = await fetch('/api/create-test', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Build failed.');
+    window.location.href = data.download_url;
+    buildStatus.className = 'status ok';
+    buildStatus.textContent = 'Test ready — download started.';
+  } catch (err) {
+    buildStatus.className = 'status error';
+    buildStatus.textContent = err.message;
+  } finally {
+    buildBtn.disabled = false;
+  }
+});
+
+document.getElementById('resetTestBtn').addEventListener('click', () => {
+  document.getElementById('paperSelect').value = '';
+  renderChaptersForSelectedPaper(); // repaints chapters + filtered library list to their placeholders
+  testPdfZone.clear();
+  document.querySelectorAll('.lib-cb-test:checked').forEach(cb => cb.checked = false);
+  document.getElementById('testPdfLibraryDropdown').updateLabel();
+  buildStatus.textContent = '';
+  buildBtn.disabled = true;
+});
+</script>
+
+</body>
+</html>
