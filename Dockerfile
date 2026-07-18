@@ -27,4 +27,4 @@ EXPOSE 5000
 # than several workers each loading OCR models. Raise --workers if your
 # host has multiple cores and you've tested memory headroom.
 # Long timeout: OCR on a multi-page scanned PDF can take a while.
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "4", "--timeout", "300", "app:app"]
+CMD gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 1 --threads 4 --timeout 300 app:app
