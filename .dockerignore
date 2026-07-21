@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+workdir/
+extraction_cache/
+papers_library/
+.git/
+.env
