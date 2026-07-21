@@ -10,6 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY app.py question_extractor.py ./
 COPY frontend ./frontend
 COPY papers_library ./papers_library
@@ -17,6 +20,7 @@ COPY papers_library ./papers_library
 # workdir/ (per-session files) and extraction_cache/ (OCR cache) should be
 # mounted as a persistent volume in production - see deployment notes.
 RUN mkdir -p workdir extraction_cache
+
 EXPOSE 5000
 
 # Single worker: OCR is CPU-heavy and the app already isolates users by
