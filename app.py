@@ -106,6 +106,25 @@ def merge_docx_folder(source_dir: Path, dest_dir: Path):
             shutil.copy(src_file, dest_file)
 
 
+def renumber_chapter_dir(chapter_dir: Path):
+    """
+    Each source PDF's questions get numbered Q:1, Q:2... independently of
+    whatever's already in the destination chapter file, so merging content
+    from more than one source (multiple papers in one batch, or an
+    append-to-existing run) leaves duplicate/overlapping numbers - e.g. an
+    uploaded file with Q:1..Q:8 followed by a freshly merged-in Q:1..Q:5.
+    This walks every chapter .docx after all merging is done and relabels
+    the questions sequentially from 1, based on however many are actually
+    in the file - it only rewrites the heading text, it never removes or
+    reorders content.
+    """
+    for docx_path in chapter_dir.glob("*.docx"):
+        try:
+            renumber_questions(str(docx_path))
+        except Exception:
+            logging.exception(f"Failed to renumber {docx_path}")
+
+
 def get_chapters_for_pdf(pdf_path: Path) -> Path:
     """
     Returns a folder containing the per-topic .docx files extracted from
@@ -197,6 +216,8 @@ def _run_extraction_job(job_id: str, saved_paths, chapter_dir: Path):
             if (per_file_dir / "_complete").exists():
                 cache_hits += 1
             merge_docx_folder(per_file_dir, chapter_dir)
+
+        renumber_chapter_dir(chapter_dir)
 
         produced = sorted(p.name for p in chapter_dir.glob("*.docx"))
         with EXTRACTION_JOBS_LOCK:
@@ -371,6 +392,8 @@ def api_extract():
     except Exception as e:
         logging.exception("Extraction failed")
         return jsonify({"error": f"Extraction failed: {e}"}), 500
+
+    renumber_chapter_dir(chapter_dir)
 
     produced = sorted(p.name for p in chapter_dir.glob("*.docx"))
     return jsonify({

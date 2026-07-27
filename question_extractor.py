@@ -1489,9 +1489,50 @@ def assign_all_chapters(question_text, keyword_map, chapter_folder, threshold=2,
 
 def generate_test(chapter_paths, output_path):
     test_title = "A Level Test"
+    subject_line = "Computer Science (9618)"
+
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
     # Create a new master document
     master = Document()
-    master.add_heading(test_title, level=0)
+
+    # --- Header row 1: test title + subject, spread across the page ---
+    title_row = master.add_table(rows=1, cols=2)
+    title_row.autofit = False
+    title_row.columns[0].width = Inches(3.25)
+    title_row.columns[1].width = Inches(3.25)
+    title_cells = title_row.rows[0].cells
+
+    p_title = title_cells[0].paragraphs[0]
+    run_title = p_title.add_run(test_title)
+    run_title.bold = True
+    run_title.font.size = Pt(16)
+
+    p_subject = title_cells[1].paragraphs[0]
+    p_subject.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run_subject = p_subject.add_run(subject_line)
+    run_subject.bold = True
+    run_subject.font.size = Pt(14)
+
+    # --- Header row 2: Marks / Name / Roll No, spread across the page ---
+    info_row = master.add_table(rows=1, cols=3)
+    info_row.autofit = False
+    info_row.columns[0].width = Inches(2.17)
+    info_row.columns[1].width = Inches(2.17)
+    info_row.columns[2].width = Inches(2.16)
+    info_cells = info_row.rows[0].cells
+
+    info_cells[0].paragraphs[0].add_run("Marks: " + "." * 30)
+
+    p_name = info_cells[1].paragraphs[0]
+    p_name.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_name.add_run("Name: " + "." * 20)
+
+    p_roll = info_cells[2].paragraphs[0]
+    p_roll.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    p_roll.add_run("Roll No: " + "." * 20)
+
+    master.add_paragraph()  # spacing before the questions start
 
     composer = Composer(master)
 
