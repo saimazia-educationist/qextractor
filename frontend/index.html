@@ -434,10 +434,7 @@ extractBtn.addEventListener('click', async () => {
     if (!res.ok) throw new Error(data.error || 'Extraction failed.');
     extractStatus.className = 'status ok';
     const n = (data.chapters_available || []).length;
-    const cacheNote = data.cache_hits > 0
-      ? ` (${data.cache_hits}/${data.total_files} paper${data.total_files === 1 ? '' : 's'} loaded instantly from cache)`
-      : '';
-    extractStatus.textContent = `Done. ${n} topic file(s) extracted.${cacheNote}`;
+    extractStatus.textContent = `Done. ${n} topic file(s) extracted.`;
     downloadExtractedBtn.disabled = false;
   } catch (err) {
     extractStatus.className = 'status error';
