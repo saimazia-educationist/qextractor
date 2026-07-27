@@ -8,6 +8,7 @@ Each browser session gets its own isolated working folder under WORKDIR, so
 multiple users can use the site at once without stepping on each other's files.
 """
 import os
+import re
 import uuid
 import shutil
 import hashlib
@@ -115,6 +116,46 @@ def merge_docx_folder(source_dir: Path, dest_dir: Path):
             composer.save(str(dest_file))
         else:
             shutil.copy(src_file, dest_file)
+
+
+def _normalize_chapter_key(filename: str) -> str:
+    """
+    Chapter filenames the system generates use spaces (e.g. "Logic gates and
+    logic circuits.docx"), but a user's OS/browser sometimes replaces spaces
+    with underscores on download/save (e.g. "Logic_gates_and_logic_circuits.docx").
+    Comparing on a normalized key (lowercase, underscores/spaces collapsed)
+    means an upload like that still matches its real chapter file instead of
+    silently creating a second, separate file next to it.
+    """
+    name = os.path.splitext(filename)[0]
+    name = name.replace("_", " ").lower()
+    name = re.sub(r"\s+", " ", name).strip()
+    return name
+
+
+def _all_canonical_chapter_names():
+    """All chapter .docx names the system currently knows about, across every paper."""
+    names = []
+    for paper in PAPER_NAMES:
+        for name in get_chapter_list(paper):
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def resolve_uploaded_chapter_filename(uploaded_filename: str) -> str:
+    """
+    Maps an uploaded "existing chapter" filename to the system's canonical
+    name for that chapter if a normalized match is found, so merging lines
+    up correctly. Falls back to the uploaded filename unchanged if nothing
+    matches (still safe - it just won't auto-merge into a differently named
+    chapter, same as before).
+    """
+    target_key = _normalize_chapter_key(uploaded_filename)
+    for canonical_name in _all_canonical_chapter_names():
+        if _normalize_chapter_key(canonical_name) == target_key:
+            return canonical_name
+    return os.path.basename(uploaded_filename)
 
 
 def renumber_chapter_dir(chapter_dir: Path):
@@ -282,7 +323,8 @@ def api_extract_start():
         for f in existing_docx_files:
             if not f.filename.lower().endswith(".docx"):
                 return jsonify({"error": f"'{f.filename}' is not a .docx file."}), 400
-            dest = chapter_dir / os.path.basename(f.filename)
+            resolved_name = resolve_uploaded_chapter_filename(f.filename)
+            dest = chapter_dir / resolved_name
             f.save(dest)
 
     saved_paths = []

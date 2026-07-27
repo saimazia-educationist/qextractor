@@ -1554,12 +1554,21 @@ from docx import Document
 
 
 def renumber_questions(docx_path):
+    """
+    Relabels question headings sequentially (Q: 1, Q: 2, Q: 3...) based on
+    however many are actually in the merged file, while keeping whatever
+    comes after the number - e.g. "Q: 1 - (9618_s21_qp_41)" stays
+    "Q: 4 - (9618_s21_qp_41)", it's only the number itself that changes.
+    """
     doc = Document(docx_path)
     qnum = 1
     for para in doc.paragraphs:
-        if para.style.name == "Heading 2" and para.text.strip().startswith("Q:"):
-            # Replace with just "Q: <number>"
-            new_text = f"Q: {qnum}"
+        text = para.text.strip()
+        if para.style.name == "Heading 2" and text.startswith("Q:"):
+            # Keep everything after the number (e.g. " - (paper_ref)") as-is
+            match = re.match(r"Q:\s*\d+\s*(.*)", text)
+            suffix = match.group(1).strip() if match and match.group(1).strip() else ""
+            new_text = f"Q: {qnum} {suffix}".rstrip() if suffix else f"Q: {qnum}"
 
             # Update only the first run to preserve formatting
             if para.runs:
@@ -1570,5 +1579,5 @@ def renumber_questions(docx_path):
             qnum += 1
 
     doc.save(docx_path)
-    print(f"[INFO] Renumbered questions (removed paper refs) in {docx_path}")
+    print(f"[INFO] Renumbered questions (kept paper refs) in {docx_path}")
 
