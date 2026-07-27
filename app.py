@@ -12,6 +12,8 @@ import uuid
 import shutil
 import hashlib
 import logging
+import threading
+import time
 from pathlib import Path
 
 from flask import Flask, request, jsonify, send_file, session
@@ -161,6 +163,125 @@ def parse_paper_meta(filename: str) -> dict:
     session_display = f"{season} {year}".strip() or "Unknown session"
 
     return {"subject": subject, "paper_label": label, "session": session_display, "doc_type": doc_type}
+
+
+# --- Background extraction jobs -------------------------------------------
+# Extracting several uncached PDFs in one request can take minutes, which
+# exceeds most hosting platforms' proxy/request timeouts (Render, Railway,
+# etc.) and produces a generic "upstream error" even though the extraction
+# itself is still working fine. So /api/extract/start kicks the real work
+# off in a background thread and returns immediately with a job id; the
+# frontend polls /api/extract/status/<job_id> every couple seconds instead
+# of waiting on one long-lived request.
+EXTRACTION_JOBS = {}
+EXTRACTION_JOBS_LOCK = threading.Lock()
+JOB_MAX_AGE_SECONDS = 2 * 60 * 60  # prune finished jobs after 2 hours
+
+
+def _prune_old_jobs():
+    cutoff = time.time() - JOB_MAX_AGE_SECONDS
+    with EXTRACTION_JOBS_LOCK:
+        stale = [jid for jid, job in EXTRACTION_JOBS.items() if job.get("_created", 0) < cutoff]
+        for jid in stale:
+            del EXTRACTION_JOBS[jid]
+
+
+def _run_extraction_job(job_id: str, saved_paths, chapter_dir: Path):
+    total = len(saved_paths)
+    cache_hits = 0
+    try:
+        for i, pdf_path in enumerate(saved_paths):
+            with EXTRACTION_JOBS_LOCK:
+                EXTRACTION_JOBS[job_id]["progress"] = f"{i}/{total} papers processed"
+            per_file_dir = get_chapters_for_pdf(pdf_path)
+            if (per_file_dir / "_complete").exists():
+                cache_hits += 1
+            merge_docx_folder(per_file_dir, chapter_dir)
+
+        produced = sorted(p.name for p in chapter_dir.glob("*.docx"))
+        with EXTRACTION_JOBS_LOCK:
+            EXTRACTION_JOBS[job_id].update({
+                "status": "done",
+                "progress": f"{total}/{total} papers processed",
+                "result": {
+                    "chapters_available": produced,
+                    "cache_hits": cache_hits,
+                    "total_files": total,
+                },
+            })
+    except InvalidPaperError as e:
+        with EXTRACTION_JOBS_LOCK:
+            EXTRACTION_JOBS[job_id].update({"status": "error", "error": str(e)})
+    except Exception as e:
+        logging.exception("Background extraction failed")
+        with EXTRACTION_JOBS_LOCK:
+            EXTRACTION_JOBS[job_id].update({"status": "error", "error": f"Extraction failed: {e}"})
+
+
+@app.route("/api/extract/start", methods=["POST"])
+def api_extract_start():
+    """
+    Saves the uploaded/selected PDFs (fast) and starts real extraction in a
+    background thread, returning a job id immediately instead of blocking
+    the request for however long OCR takes.
+    """
+    _prune_old_jobs()
+
+    files = request.files.getlist("pdfs")
+    library_selected = request.form.getlist("library_files")
+
+    sdir = get_session_dir()
+    upload_dir = sdir / "uploads"
+    chapter_dir = sdir / "chapters"
+    upload_dir.mkdir(exist_ok=True)
+
+    mode = "new" if request.form.get("mode", "new") == "new" else "append"
+    if mode == "new":
+        shutil.rmtree(chapter_dir, ignore_errors=True)
+    chapter_dir.mkdir(exist_ok=True)
+
+    saved_paths = []
+    for f in files:
+        if not f.filename.lower().endswith(".pdf"):
+            return jsonify({"error": f"'{f.filename}' is not a PDF."}), 400
+        dest = upload_dir / f.filename
+        f.save(dest)
+        saved_paths.append(dest)
+
+    for name in library_selected:
+        safe_name = os.path.basename(name)
+        candidate = PAPERS_LIBRARY_DIR / safe_name
+        if not candidate.exists():
+            return jsonify({"error": f"'{safe_name}' was not found in the paper library."}), 400
+        saved_paths.append(candidate)
+
+    if not saved_paths:
+        return jsonify({"error": "No PDF files selected."}), 400
+
+    job_id = uuid.uuid4().hex
+    with EXTRACTION_JOBS_LOCK:
+        EXTRACTION_JOBS[job_id] = {
+            "status": "running",
+            "progress": f"0/{len(saved_paths)} papers processed",
+            "_created": time.time(),
+        }
+
+    thread = threading.Thread(
+        target=_run_extraction_job, args=(job_id, saved_paths, chapter_dir), daemon=True
+    )
+    thread.start()
+
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/extract/status/<job_id>")
+def api_extract_status(job_id):
+    with EXTRACTION_JOBS_LOCK:
+        job = EXTRACTION_JOBS.get(job_id)
+    if not job:
+        return jsonify({"error": "Unknown or expired job id."}), 404
+    # don't leak internal bookkeeping to the frontend
+    return jsonify({k: v for k, v in job.items() if not k.startswith("_")})
 
 
 @app.route("/api/library")

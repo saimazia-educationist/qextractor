@@ -426,14 +426,38 @@ extractBtn.addEventListener('click', async () => {
 
   extractBtn.disabled = true;
   extractStatus.className = 'status';
-  extractStatus.innerHTML = '<span class="spinner"></span>Extracting questions… this can take a while for scanned PDFs.';
+  extractStatus.innerHTML = '<span class="spinner"></span>Starting extraction…';
 
   try {
-    const res = await fetch('/api/extract', { method: 'POST', body: formData });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Extraction failed.');
+    // Kick the job off - returns almost instantly, actual OCR/extraction
+    // runs in the background so we never sit on one long HTTP request
+    // (which platforms like Render/Railway will time out and kill).
+    const startRes = await fetch('/api/extract/start', { method: 'POST', body: formData });
+    const startData = await startRes.json();
+    if (!startRes.ok) throw new Error(startData.error || 'Failed to start extraction.');
+
+    const jobId = startData.job_id;
+    let job;
+
+    // Poll for progress every couple seconds instead of waiting on one
+    // long-lived response.
+    while (true) {
+      await new Promise(r => setTimeout(r, 2000));
+      const statusRes = await fetch(`/api/extract/status/${jobId}`);
+      job = await statusRes.json();
+      if (!statusRes.ok) throw new Error(job.error || 'Lost track of the extraction job.');
+
+      if (job.status === 'running') {
+        extractStatus.innerHTML = `<span class="spinner"></span>Extracting… (${job.progress || 'starting'})`;
+      } else {
+        break;
+      }
+    }
+
+    if (job.status === 'error') throw new Error(job.error || 'Extraction failed.');
+
     extractStatus.className = 'status ok';
-    const n = (data.chapters_available || []).length;
+    const n = (job.result.chapters_available || []).length;
     extractStatus.textContent = `Done. ${n} topic file(s) extracted.`;
     downloadExtractedBtn.disabled = false;
   } catch (err) {
