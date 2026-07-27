@@ -240,6 +240,19 @@ def api_extract_start():
         shutil.rmtree(chapter_dir, ignore_errors=True)
     chapter_dir.mkdir(exist_ok=True)
 
+    # "Append to existing files": the user uploads .docx chapter files they
+    # downloaded previously (possibly days/sessions ago) from their own
+    # hard disk. We seed chapter_dir with them before extraction runs, so
+    # merge_docx_folder appends newly extracted questions into the matching
+    # chapter file by name instead of starting fresh.
+    if mode == "append":
+        existing_docx_files = request.files.getlist("existing_docx")
+        for f in existing_docx_files:
+            if not f.filename.lower().endswith(".docx"):
+                return jsonify({"error": f"'{f.filename}' is not a .docx file."}), 400
+            dest = chapter_dir / os.path.basename(f.filename)
+            f.save(dest)
+
     saved_paths = []
     for f in files:
         if not f.filename.lower().endswith(".pdf"):

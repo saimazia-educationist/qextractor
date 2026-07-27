@@ -158,8 +158,18 @@
     <div class="block">
       <div class="mode-row">
         <label><input type="radio" name="extractMode" value="new" checked> Start new extraction</label>
-        <label><input type="radio" name="extractMode" value="append"> Append to existing</label>
+        <label><input type="radio" name="extractMode" value="append"> Append to existing files</label>
       </div>
+    </div>
+
+    <div class="block" id="extractAppendBlock" style="display:none;">
+      <h3>Upload your existing chapter files</h3>
+      <p class="hint">The .docx topic files you downloaded previously (e.g. from an earlier session or a past visit). Newly extracted questions will be added into matching chapters by filename.</p>
+      <div class="dropzone" id="extractAppendDropzone">
+        Click to choose .docx files, or drag them here
+        <input type="file" id="extractAppendFileInput" accept=".docx" multiple>
+      </div>
+      <div class="filelist" id="extractAppendFileList"></div>
     </div>
 
     <div class="block">
@@ -412,6 +422,16 @@ document.getElementById('extractLibraryList').addEventListener('change', e => {
   }
 });
 
+/* ---------- Existing chapter files (for Append to existing files) ---------- */
+const extractAppendZone = wireDropzone('extractAppendDropzone', 'extractAppendFileInput', 'extractAppendFileList', '.docx', () => {});
+
+document.querySelectorAll('input[name="extractMode"]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    const mode = document.querySelector('input[name="extractMode"]:checked').value;
+    document.getElementById('extractAppendBlock').style.display = mode === 'append' ? 'block' : 'none';
+  });
+});
+
 extractBtn.addEventListener('click', async () => {
   const mode = document.querySelector('input[name="extractMode"]:checked').value;
   const source = getExtractSource();
@@ -422,6 +442,10 @@ extractBtn.addEventListener('click', async () => {
     extractZone.getFiles().forEach(f => formData.append('pdfs', f));
   } else {
     document.querySelectorAll('.lib-cb-extract:checked').forEach(cb => formData.append('library_files', cb.value));
+  }
+
+  if (mode === 'append') {
+    extractAppendZone.getFiles().forEach(f => formData.append('existing_docx', f));
   }
 
   extractBtn.disabled = true;
