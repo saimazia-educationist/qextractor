@@ -1197,12 +1197,15 @@ def keyword_in_text(keyword, text):
     keyword = keyword.lower()
 
     # allow small spacing variations between words
-    if " " in keyword:
-        words = keyword.split()
-        pattern = r"\b" + words[0] + r"\s*" + words[1] + r"\b"
+    words = keyword.split()
+    if not words:
+        # keyword was empty or all whitespace - nothing to match
+        return False
+    if len(words) >= 2:
+        pattern = r"\b" + re.escape(words[0]) + r"\s*" + re.escape(words[1]) + r"\b"
         return re.search(pattern, text) is not None
     else:
-        pattern = r"\b" + re.escape(keyword) + r"\b"
+        pattern = r"\b" + re.escape(words[0]) + r"\b"
         return re.search(pattern, text) is not None
 
 
