@@ -29,21 +29,32 @@ from question_extractor import (
 logging.basicConfig(level=logging.INFO)
 
 APP_ROOT = Path(__file__).parent
-WORKDIR = APP_ROOT / "workdir"
-WORKDIR.mkdir(exist_ok=True)
+
+# All three of these need to survive between requests - workdir holds each
+# session's in-progress/generated files (including the built test.docx),
+# extraction_cache holds OCR results, and papers_library holds the shared
+# paper collection. On most hosts (Railway, Render, etc.) anything outside
+# a mounted persistent volume gets wiped on every redeploy/restart, so in
+# production DATA_DIR should point at that volume's mount path (e.g. set
+# the DATA_DIR env var to "/data" after attaching a Railway Volume there).
+# Falls back to a local folder next to the code for local development.
+DATA_ROOT = Path(os.environ.get("DATA_DIR", str(APP_ROOT)))
+
+WORKDIR = DATA_ROOT / "workdir"
+WORKDIR.mkdir(parents=True, exist_ok=True)
 
 # Extraction (OCR + PDF parsing) is the slow part of this app. Since many
 # users upload the exact same well-known past papers, we cache extraction
 # results by file content hash - so a paper only ever needs to be OCR'd
 # once, ever, regardless of who uploads it or how many times.
-CACHE_DIR = APP_ROOT / "extraction_cache"
-CACHE_DIR.mkdir(exist_ok=True)
+CACHE_DIR = DATA_ROOT / "extraction_cache"
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Drop PDF past papers directly into this folder on the server (named the
 # normal CIE way, e.g. 9608_s15_qp_11.pdf) and they'll show up as a
 # pick-from-list option, so visitors don't need their own copies on disk.
-PAPERS_LIBRARY_DIR = APP_ROOT / "papers_library"
-PAPERS_LIBRARY_DIR.mkdir(exist_ok=True)
+PAPERS_LIBRARY_DIR = DATA_ROOT / "papers_library"
+PAPERS_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_UPLOAD_MB = 100
 
