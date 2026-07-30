@@ -108,6 +108,74 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   hr.sep { border: none; border-top: 1px solid var(--line); margin: 22px 0; }
+
+  /* ---------- Auth bar ---------- */
+  .authbar {
+    max-width: 760px; margin: 0 auto; padding: 10px 24px 0;
+    display: flex; justify-content: flex-end; align-items: center; gap: 10px;
+    font-size: 0.85rem; color: #5b6472;
+  }
+  .authbar .credits-badge {
+    background: var(--accent-light); color: var(--accent); font-weight: 700;
+    padding: 4px 10px; border-radius: 999px; font-size: 0.8rem;
+  }
+  .authbar button, .authbar .link-btn {
+    font: inherit; font-size: 0.85rem; background: none; border: none;
+    color: var(--accent); font-weight: 600; cursor: pointer; padding: 4px 2px;
+  }
+  .authbar .link-btn.muted { color: #5b6472; font-weight: 500; }
+
+  /* ---------- Modal ---------- */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(28,36,48,.45);
+    z-index: 100; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: #fff; border-radius: 10px; max-width: 420px; width: 100%;
+    padding: 26px; max-height: 90vh; overflow-y: auto;
+  }
+  .modal h2 { margin: 0 0 4px; font-size: 1.15rem; }
+  .modal p.hint { color: #6b7280; font-size: 0.85rem; margin: 2px 0 16px; }
+  .modal label { display: block; font-size: 0.85rem; font-weight: 600; margin: 12px 0 5px; }
+  .modal input[type="email"], .modal input[type="password"], .modal input[type="text"],
+  .modal input[type="number"], .modal input[type="file"], .modal select, .modal textarea {
+    width: 100%; font: inherit; font-size: 0.9rem; padding: 9px 11px;
+    border: 1px solid var(--line); border-radius: 7px; box-sizing: border-box;
+  }
+  .modal textarea { resize: vertical; min-height: 60px; }
+  .modal .modal-actions { display: flex; gap: 10px; margin-top: 18px; align-items: center; }
+  .modal .modal-close {
+    position: absolute; top: 14px; right: 16px; background: none; border: none;
+    font-size: 1.2rem; color: #8a92a0; cursor: pointer; padding: 4px;
+  }
+  .modal-inner-wrap { position: relative; }
+  .modal .switcher { margin-top: 14px; font-size: 0.85rem; color: #6b7280; }
+  .modal .switcher button { background: none; border: none; color: var(--accent); font-weight: 600; cursor: pointer; font: inherit; }
+
+  /* ---------- Buy credits ---------- */
+  .method-tabs { display: flex; gap: 8px; margin-top: 4px; }
+  .method-tab {
+    flex: 1; text-align: center; padding: 9px; border-radius: 7px; cursor: pointer;
+    border: 1px solid var(--line); font-size: 0.85rem; font-weight: 600; color: #6b7280;
+  }
+  .method-tab.active { border-color: var(--accent); background: var(--accent-light); color: var(--accent); }
+  .payment-details {
+    background: var(--accent-light); border-radius: 8px; padding: 12px 14px;
+    font-size: 0.85rem; margin-top: 10px; line-height: 1.5;
+  }
+  .payment-details b { color: var(--ink); }
+  .payment-history { margin-top: 18px; }
+  .payment-history h3 { font-size: 0.9rem; margin: 0 0 8px; }
+  .payment-row {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 0.82rem; padding: 7px 0; border-bottom: 1px solid #f0ede5;
+  }
+  .payment-row:last-child { border-bottom: none; }
+  .pill { padding: 2px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; }
+  .pill.pending { background: #f4ecd8; color: #8a6a1f; }
+  .pill.approved { background: var(--accent-light); color: var(--accent); }
+  .pill.rejected { background: #f3e0dd; color: var(--danger); }
 </style>
 </head>
 <body>
@@ -116,6 +184,84 @@
   <h1>Question Extractor</h1>
   <p>Extract A Level questions by topic, or build a custom test.</p>
 </header>
+
+<div class="authbar" id="authbarLoggedOut">
+  <button class="link-btn" id="showLoginBtn">Log in</button>
+  <button class="link-btn" id="showRegisterBtn">Sign up</button>
+</div>
+
+<div class="authbar" id="authbarLoggedIn" style="display:none;">
+  <span id="userEmailLabel"></span>
+  <span class="credits-badge" id="creditsBadge">0 credits</span>
+  <button class="link-btn" id="showBuyCreditsBtn">Buy credits</button>
+  <button class="link-btn muted" id="logoutBtn">Log out</button>
+</div>
+
+<!-- ================= AUTH MODAL (login / register) ================= -->
+<div class="modal-overlay" id="authModalOverlay">
+  <div class="modal modal-inner-wrap">
+    <button class="modal-close" id="authModalClose">&times;</button>
+
+    <div id="loginForm">
+      <h2>Log in</h2>
+      <p class="hint">Welcome back.</p>
+      <label for="loginEmail">Email</label>
+      <input type="email" id="loginEmail" autocomplete="email">
+      <label for="loginPassword">Password</label>
+      <input type="password" id="loginPassword" autocomplete="current-password">
+      <div class="modal-actions">
+        <button class="btn-primary" id="loginSubmitBtn">Log in</button>
+      </div>
+      <div class="status" id="loginStatus"></div>
+      <div class="switcher">No account? <button id="switchToRegister">Sign up</button></div>
+    </div>
+
+    <div id="registerForm" style="display:none;">
+      <h2>Create an account</h2>
+      <p class="hint">You'll get a few free credits to try things out.</p>
+      <label for="registerEmail">Email</label>
+      <input type="email" id="registerEmail" autocomplete="email">
+      <label for="registerPassword">Password</label>
+      <input type="password" id="registerPassword" autocomplete="new-password">
+      <div class="modal-actions">
+        <button class="btn-primary" id="registerSubmitBtn">Sign up</button>
+      </div>
+      <div class="status" id="registerStatus"></div>
+      <div class="switcher">Already have an account? <button id="switchToLogin">Log in</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= BUY CREDITS MODAL ================= -->
+<div class="modal-overlay" id="creditsModalOverlay">
+  <div class="modal modal-inner-wrap">
+    <button class="modal-close" id="creditsModalClose">&times;</button>
+    <h2>Buy credits</h2>
+    <p class="hint">Pay via Easypaisa or bank transfer, then submit your transaction ID below. Credits are added once we verify the payment — usually within a few hours.</p>
+
+    <div class="method-tabs">
+      <div class="method-tab active" data-method="easypaisa">Easypaisa</div>
+      <div class="method-tab" data-method="bank_transfer">Bank Transfer</div>
+    </div>
+    <div class="payment-details" id="paymentDetails">Loading payment details…</div>
+
+    <label for="paymentAmount">Amount paid (Rs.)</label>
+    <input type="text" id="paymentAmount" placeholder="e.g. 500">
+    <label for="paymentTxnId">Transaction ID / reference number</label>
+    <input type="text" id="paymentTxnId" placeholder="From your Easypaisa app or bank receipt">
+    <label for="paymentProof">Screenshot / photo of receipt (optional)</label>
+    <input type="file" id="paymentProof" accept=".png,.jpg,.jpeg,.pdf,.webp">
+    <label for="paymentNote">Note (optional)</label>
+    <textarea id="paymentNote" placeholder="Anything else we should know"></textarea>
+
+    <div class="modal-actions">
+      <button class="btn-primary" id="paymentSubmitBtn">Submit for review</button>
+    </div>
+    <div class="status" id="paymentStatus"></div>
+
+    <div class="payment-history" id="paymentHistory"></div>
+  </div>
+</div>
 
 <div class="tabs">
   <div class="tab active" data-tab="extract">Extract Topical Questions</div>
@@ -233,6 +379,211 @@
 
 <script>
 const PAPER_NAMES = ["Paper 1", "Paper 2", "Paper 3", "Paper 4"];
+
+/* ================= Auth + credits ================= */
+let currentUser = null; // { id, email, credits } | null
+
+function openOverlay(id) { document.getElementById(id).classList.add('open'); }
+function closeOverlay(id) { document.getElementById(id).classList.remove('open'); }
+
+function showLoginForm() {
+  document.getElementById('loginForm').style.display = 'block';
+  document.getElementById('registerForm').style.display = 'none';
+  openOverlay('authModalOverlay');
+}
+function showRegisterForm() {
+  document.getElementById('loginForm').style.display = 'none';
+  document.getElementById('registerForm').style.display = 'block';
+  openOverlay('authModalOverlay');
+}
+
+document.getElementById('showLoginBtn').addEventListener('click', showLoginForm);
+document.getElementById('showRegisterBtn').addEventListener('click', showRegisterForm);
+document.getElementById('switchToRegister').addEventListener('click', showRegisterForm);
+document.getElementById('switchToLogin').addEventListener('click', showLoginForm);
+document.getElementById('authModalClose').addEventListener('click', () => closeOverlay('authModalOverlay'));
+document.getElementById('authModalOverlay').addEventListener('click', e => {
+  if (e.target.id === 'authModalOverlay') closeOverlay('authModalOverlay');
+});
+
+function updateAuthUI() {
+  const loggedOut = document.getElementById('authbarLoggedOut');
+  const loggedIn = document.getElementById('authbarLoggedIn');
+  if (currentUser) {
+    loggedOut.style.display = 'none';
+    loggedIn.style.display = 'flex';
+    document.getElementById('userEmailLabel').textContent = currentUser.email;
+    document.getElementById('creditsBadge').textContent =
+      `${currentUser.credits} credit${currentUser.credits === 1 ? '' : 's'}`;
+  } else {
+    loggedOut.style.display = 'flex';
+    loggedIn.style.display = 'none';
+  }
+}
+
+async function refreshAuth() {
+  const res = await fetch('/api/auth/me');
+  const data = await res.json();
+  currentUser = data.user;
+  updateAuthUI();
+  return currentUser;
+}
+
+document.getElementById('loginSubmitBtn').addEventListener('click', async () => {
+  const email = document.getElementById('loginEmail').value;
+  const password = document.getElementById('loginPassword').value;
+  const status = document.getElementById('loginStatus');
+  status.className = 'status';
+  status.textContent = '';
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Login failed.');
+    currentUser = data.user;
+    updateAuthUI();
+    closeOverlay('authModalOverlay');
+  } catch (err) {
+    status.className = 'status error';
+    status.textContent = err.message;
+  }
+});
+
+document.getElementById('registerSubmitBtn').addEventListener('click', async () => {
+  const email = document.getElementById('registerEmail').value;
+  const password = document.getElementById('registerPassword').value;
+  const status = document.getElementById('registerStatus');
+  status.className = 'status';
+  status.textContent = '';
+  try {
+    const res = await fetch('/api/auth/register', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Sign up failed.');
+    currentUser = data.user;
+    updateAuthUI();
+    closeOverlay('authModalOverlay');
+  } catch (err) {
+    status.className = 'status error';
+    status.textContent = err.message;
+  }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  currentUser = null;
+  updateAuthUI();
+});
+
+/* ---------- Buy credits modal ---------- */
+let paymentMethodsInfo = null;
+let selectedPaymentMethod = 'easypaisa';
+
+document.getElementById('showBuyCreditsBtn').addEventListener('click', openBuyCreditsModal);
+document.getElementById('creditsModalClose').addEventListener('click', () => closeOverlay('creditsModalOverlay'));
+document.getElementById('creditsModalOverlay').addEventListener('click', e => {
+  if (e.target.id === 'creditsModalOverlay') closeOverlay('creditsModalOverlay');
+});
+
+document.querySelectorAll('.method-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.method-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    selectedPaymentMethod = tab.dataset.method;
+    renderPaymentDetails();
+  });
+});
+
+function renderPaymentDetails() {
+  const el = document.getElementById('paymentDetails');
+  if (!paymentMethodsInfo) { el.textContent = 'Loading payment details…'; return; }
+  const m = paymentMethodsInfo[selectedPaymentMethod];
+  if (!m) { el.textContent = 'Payment details unavailable.'; return; }
+  if (selectedPaymentMethod === 'easypaisa') {
+    el.innerHTML = `<b>${m.label}</b><br>Account title: <b>${m.account_title}</b><br>Number: <b>${m.account_number}</b><br><br>${m.instructions}`;
+  } else {
+    el.innerHTML = `<b>${m.label}</b><br>Bank: <b>${m.bank_name}</b><br>Account title: <b>${m.account_title}</b><br>Account number: <b>${m.account_number}</b><br>IBAN: <b>${m.iban}</b><br><br>${m.instructions}`;
+  }
+}
+
+async function openBuyCreditsModal() {
+  openOverlay('creditsModalOverlay');
+  if (!paymentMethodsInfo) {
+    const res = await fetch('/api/payment/methods');
+    const data = await res.json();
+    paymentMethodsInfo = data.methods;
+  }
+  renderPaymentDetails();
+  loadPaymentHistory();
+}
+
+async function loadPaymentHistory() {
+  const container = document.getElementById('paymentHistory');
+  const res = await fetch('/api/payment/mine');
+  if (!res.ok) { container.innerHTML = ''; return; }
+  const data = await res.json();
+  const payments = data.payments || [];
+  if (payments.length === 0) { container.innerHTML = ''; return; }
+  container.innerHTML = `<h3>Your submissions</h3>` + payments.map(p => `
+    <div class="payment-row">
+      <span>${p.method === 'easypaisa' ? 'Easypaisa' : 'Bank transfer'} — ${p.transaction_id}</span>
+      <span class="pill ${p.status}">${p.status}</span>
+    </div>
+  `).join('');
+}
+
+document.getElementById('paymentSubmitBtn').addEventListener('click', async () => {
+  const status = document.getElementById('paymentStatus');
+  status.className = 'status';
+  status.textContent = '';
+
+  const formData = new FormData();
+  formData.append('method', selectedPaymentMethod);
+  formData.append('amount', document.getElementById('paymentAmount').value);
+  formData.append('transaction_id', document.getElementById('paymentTxnId').value);
+  formData.append('note', document.getElementById('paymentNote').value);
+  const proofFile = document.getElementById('paymentProof').files[0];
+  if (proofFile) formData.append('proof', proofFile);
+
+  try {
+    const res = await fetch('/api/payment/submit', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Submission failed.');
+    status.className = 'status ok';
+    status.textContent = 'Submitted! We\'ll review it and add your credits shortly.';
+    document.getElementById('paymentAmount').value = '';
+    document.getElementById('paymentTxnId').value = '';
+    document.getElementById('paymentNote').value = '';
+    document.getElementById('paymentProof').value = '';
+    loadPaymentHistory();
+  } catch (err) {
+    status.className = 'status error';
+    status.textContent = err.message;
+  }
+});
+
+/* Handles a fetch Response that might be a 401 (not logged in) or 402 (no
+   credits) - pops the right modal and returns true if it handled it, so
+   the caller can bail out of its normal success/error flow. */
+function handleAuthOrCreditError(res, data) {
+  if (res.status === 401) {
+    showLoginForm();
+    return true;
+  }
+  if (res.status === 402 || data.code === 'no_credits') {
+    openBuyCreditsModal();
+    return true;
+  }
+  return false;
+}
+
+refreshAuth();
+
+
 
 /* ---------- Tabs ---------- */
 document.querySelectorAll('.tab').forEach(tab => {
@@ -433,6 +784,8 @@ document.querySelectorAll('input[name="extractMode"]').forEach(radio => {
 });
 
 extractBtn.addEventListener('click', async () => {
+  if (!currentUser) { showLoginForm(); return; }
+
   const mode = document.querySelector('input[name="extractMode"]:checked').value;
   const source = getExtractSource();
   const formData = new FormData();
@@ -458,7 +811,11 @@ extractBtn.addEventListener('click', async () => {
     // (which platforms like Render/Railway will time out and kill).
     const startRes = await fetch('/api/extract/start', { method: 'POST', body: formData });
     const startData = await startRes.json();
-    if (!startRes.ok) throw new Error(startData.error || 'Failed to start extraction.');
+    if (!startRes.ok) {
+      if (handleAuthOrCreditError(startRes, startData)) { extractStatus.textContent = ''; return; }
+      throw new Error(startData.error || 'Failed to start extraction.');
+    }
+    refreshAuth(); // credit was just spent - update the badge
 
     const jobId = startData.job_id;
     let job;
@@ -478,7 +835,10 @@ extractBtn.addEventListener('click', async () => {
       }
     }
 
-    if (job.status === 'error') throw new Error(job.error || 'Extraction failed.');
+    if (job.status === 'error') {
+      refreshAuth(); // failed job refunds the credit server-side - reflect that
+      throw new Error(job.error || 'Extraction failed.');
+    }
 
     extractStatus.className = 'status ok';
     const n = (job.result.chapters_available || []).length;
@@ -493,6 +853,7 @@ extractBtn.addEventListener('click', async () => {
 });
 
 downloadExtractedBtn.addEventListener('click', () => {
+  if (!currentUser) { showLoginForm(); return; }
   window.location.href = '/api/download-extracted';
 });
 
@@ -515,6 +876,8 @@ function updateBuildBtn() {
 }
 
 buildBtn.addEventListener('click', async () => {
+  if (!currentUser) { showLoginForm(); return; }
+
   const selectedChapters = Array.from(document.querySelectorAll('.chapter-cb:checked')).map(cb => cb.value);
 
   const formData = new FormData();
@@ -530,7 +893,11 @@ buildBtn.addEventListener('click', async () => {
   try {
     const res = await fetch('/api/create-test', { method: 'POST', body: formData });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Build failed.');
+    if (!res.ok) {
+      if (handleAuthOrCreditError(res, data)) { buildStatus.textContent = ''; return; }
+      throw new Error(data.error || 'Build failed.');
+    }
+    refreshAuth(); // credit was just spent - update the badge
     window.location.href = data.download_url;
     buildStatus.className = 'status ok';
     buildStatus.textContent = 'Test ready — download started.';

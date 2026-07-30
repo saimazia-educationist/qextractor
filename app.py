@@ -15,10 +15,13 @@ import hashlib
 import logging
 import threading
 import time
+from functools import wraps
 from pathlib import Path
 
 from flask import Flask, request, jsonify, send_file, session
+from werkzeug.utils import secure_filename
 
+import accounts
 from question_extractor import (
     extract_questions,
     generate_test,
@@ -57,6 +60,11 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 PAPERS_LIBRARY_DIR = DATA_ROOT / "papers_library"
 PAPERS_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
 
+# Screenshots/photos users attach as proof of an Easypaisa or bank transfer
+# payment, so an admin can check them before approving credits.
+PAYMENT_PROOFS_DIR = DATA_ROOT / "payment_proofs"
+PAYMENT_PROOFS_DIR.mkdir(parents=True, exist_ok=True)
+
 MAX_UPLOAD_MB = 100
 
 app = Flask(__name__, static_folder=str(APP_ROOT / "frontend"), static_url_path="")
@@ -73,7 +81,74 @@ app.secret_key = _secret
 
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
+accounts.init_db(DATA_ROOT / "accounts.db")
+
+# Password for the /admin payment-approval panel. Set this in your real
+# deployment's environment variables - the fallback below is only for
+# local development and is intentionally not secure.
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
+if not ADMIN_PASSWORD:
+    if os.environ.get("FLASK_ENV") == "production" or os.environ.get("RENDER"):
+        raise RuntimeError("ADMIN_PASSWORD environment variable must be set in production.")
+    ADMIN_PASSWORD = "dev-admin-change-me"
+    logging.warning("Using insecure default ADMIN_PASSWORD - set ADMIN_PASSWORD env var in production.")
+
+# Manual payment details shown to users on the "buy credits" screen. Edit
+# these to your real Easypaisa account and bank details before going live.
+PAYMENT_METHODS_INFO = {
+    "easypaisa": {
+        "label": "Easypaisa",
+        "account_title": os.environ.get("EASYPAISA_ACCOUNT_TITLE", "Your Name"),
+        "account_number": os.environ.get("EASYPAISA_ACCOUNT_NUMBER", "03XXXXXXXXX"),
+        "instructions": "Send the payment via Easypaisa to the number above, then submit the "
+                         "transaction ID shown in your Easypaisa app along with a screenshot.",
+    },
+    "bank_transfer": {
+        "label": "Bank Transfer",
+        "bank_name": os.environ.get("BANK_NAME", "Your Bank"),
+        "account_title": os.environ.get("BANK_ACCOUNT_TITLE", "Your Name"),
+        "account_number": os.environ.get("BANK_ACCOUNT_NUMBER", "0000000000000"),
+        "iban": os.environ.get("BANK_IBAN", "PKxxXXXX0000000000000000"),
+        "instructions": "Transfer to the account above, then submit the transaction reference "
+                         "number along with a screenshot or photo of the receipt.",
+    },
+}
+
+PAYMENT_PROOF_EXTENSIONS = {".png", ".jpg", ".jpeg", ".pdf", ".webp"}
+
 PAPER_NAMES = ["Paper 1", "Paper 2", "Paper 3", "Paper 4"]
+
+
+def login_required(view):
+    """Rejects the request with a 401 (which the frontend turns into a
+    'please log in' prompt) unless a logged-in user is on the session."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            return jsonify({"error": "Please log in to continue.", "code": "login_required"}), 401
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("is_admin"):
+            return jsonify({"error": "Admin login required.", "code": "admin_login_required"}), 401
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def current_user():
+    """Returns the logged-in user's full DB row, or None. Also clears a
+    stale session (e.g. the account was deleted) instead of erroring."""
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+    user = accounts.get_user(user_id)
+    if not user:
+        session.pop("user_id", None)
+    return user
 
 
 def get_session_dir() -> Path:
@@ -257,7 +332,7 @@ def _prune_old_jobs():
             del EXTRACTION_JOBS[jid]
 
 
-def _run_extraction_job(job_id: str, saved_paths, chapter_dir: Path):
+def _run_extraction_job(job_id: str, saved_paths, chapter_dir: Path, user_id: int, credits_spent: int):
     total = len(saved_paths)
     cache_hits = 0
     try:
@@ -283,23 +358,40 @@ def _run_extraction_job(job_id: str, saved_paths, chapter_dir: Path):
                 },
             })
     except InvalidPaperError as e:
+        accounts.refund_credits(user_id, credits_spent)  # the credit already spent didn't buy anything
         with EXTRACTION_JOBS_LOCK:
             EXTRACTION_JOBS[job_id].update({"status": "error", "error": str(e)})
     except Exception as e:
         logging.exception("Background extraction failed")
+        accounts.refund_credits(user_id, credits_spent)
         with EXTRACTION_JOBS_LOCK:
             EXTRACTION_JOBS[job_id].update({"status": "error", "error": f"Extraction failed: {e}"})
 
 
 @app.route("/api/extract/start", methods=["POST"])
+@login_required
 def api_extract_start():
     """
     Saves the uploaded/selected PDFs (fast) and starts real extraction in a
     background thread, returning a job id immediately instead of blocking
-    the request for however long OCR takes.
+    the request for however long OCR takes. Spends a credit up front and
+    refunds it if we never actually manage to start a job (bad upload,
+    missing files, etc) - the background job itself refunds on its own
+    failure separately, since that happens after this request returns.
     """
     _prune_old_jobs()
 
+    user = current_user()
+    if not accounts.try_spend_credits(user["id"], accounts.EXTRACT_COST):
+        return jsonify({"error": "Not enough credits. Buy more to keep going.", "code": "no_credits"}), 402
+
+    response = app.make_response(_extract_start_impl(user))
+    if response.status_code != 200:
+        accounts.refund_credits(user["id"], accounts.EXTRACT_COST)
+    return response
+
+
+def _extract_start_impl(user):
     files = request.files.getlist("pdfs")
     library_selected = request.form.getlist("library_files")
 
@@ -354,7 +446,9 @@ def api_extract_start():
         }
 
     thread = threading.Thread(
-        target=_run_extraction_job, args=(job_id, saved_paths, chapter_dir), daemon=True
+        target=_run_extraction_job,
+        args=(job_id, saved_paths, chapter_dir, user["id"], accounts.EXTRACT_COST),
+        daemon=True,
     )
     thread.start()
 
@@ -393,7 +487,159 @@ def api_chapters():
     return jsonify({paper: get_chapter_list(paper) for paper in PAPER_NAMES})
 
 
+# --- Auth (email + password) ----------------------------------------------
+
+@app.route("/api/auth/register", methods=["POST"])
+def api_auth_register():
+    data = request.get_json(silent=True) or {}
+    try:
+        user = accounts.register(data.get("email", ""), data.get("password", ""))
+    except accounts.AuthError as e:
+        return jsonify({"error": str(e)}), 400
+    session["user_id"] = user["id"]
+    return jsonify({"user": accounts.public_user(user)})
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_auth_login():
+    data = request.get_json(silent=True) or {}
+    try:
+        user = accounts.login(data.get("email", ""), data.get("password", ""))
+    except accounts.AuthError as e:
+        return jsonify({"error": str(e)}), 400
+    session["user_id"] = user["id"]
+    return jsonify({"user": accounts.public_user(user)})
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_auth_logout():
+    session.pop("user_id", None)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/me")
+def api_auth_me():
+    user = current_user()
+    return jsonify({"user": accounts.public_user(user) if user else None})
+
+
+# --- Payments (Easypaisa / bank transfer, manually reviewed) --------------
+
+@app.route("/api/payment/methods")
+def api_payment_methods():
+    """Account details + instructions shown on the 'Buy credits' screen."""
+    return jsonify({"methods": PAYMENT_METHODS_INFO})
+
+
+@app.route("/api/payment/submit", methods=["POST"])
+@login_required
+def api_payment_submit():
+    """User reports a payment they made outside the site (Easypaisa or bank
+    transfer) along with the transaction ID and optionally a screenshot.
+    This just records it as 'pending' - an admin reviews it in /admin and
+    credits the account manually, since there's no live payment gateway."""
+    user = current_user()
+    method = request.form.get("method", "")
+    amount = request.form.get("amount", "")
+    transaction_id = request.form.get("transaction_id", "")
+    note = request.form.get("note", "")
+
+    proof_filename = None
+    proof_file = request.files.get("proof")
+    if proof_file and proof_file.filename:
+        ext = os.path.splitext(proof_file.filename)[1].lower()
+        if ext not in PAYMENT_PROOF_EXTENSIONS:
+            return jsonify({"error": "Proof file must be an image or PDF."}), 400
+        proof_filename = f"{uuid.uuid4().hex}{ext}"
+        proof_file.save(PAYMENT_PROOFS_DIR / proof_filename)
+
+    try:
+        payment_id = accounts.create_payment(
+            user["id"], method, amount, transaction_id, note, proof_filename
+        )
+    except accounts.AuthError as e:
+        return jsonify({"error": str(e)}), 400
+
+    return jsonify({"ok": True, "payment_id": payment_id})
+
+
+@app.route("/api/payment/mine")
+@login_required
+def api_payment_mine():
+    user = current_user()
+    return jsonify({"payments": accounts.list_payments_for_user(user["id"])})
+
+
+# --- Admin (manual payment review) -----------------------------------------
+
+@app.route("/admin")
+def admin_page():
+    return app.send_static_file("admin.html")
+
+
+@app.route("/api/admin/login", methods=["POST"])
+def api_admin_login():
+    data = request.get_json(silent=True) or {}
+    if data.get("password") != ADMIN_PASSWORD:
+        return jsonify({"error": "Incorrect admin password."}), 400
+    session["is_admin"] = True
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/logout", methods=["POST"])
+def api_admin_logout():
+    session.pop("is_admin", None)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/me")
+def api_admin_me():
+    return jsonify({"is_admin": bool(session.get("is_admin"))})
+
+
+@app.route("/api/admin/payments")
+@admin_required
+def api_admin_payments():
+    status = request.args.get("status")  # e.g. 'pending'; omit for all
+    return jsonify({"payments": accounts.list_payments(status)})
+
+
+@app.route("/api/admin/payments/<int:payment_id>/proof")
+@admin_required
+def api_admin_payment_proof(payment_id):
+    payment = accounts.get_payment(payment_id)
+    if not payment or not payment.get("proof_filename"):
+        return jsonify({"error": "No proof file for this payment."}), 404
+    return send_file(PAYMENT_PROOFS_DIR / payment["proof_filename"])
+
+
+@app.route("/api/admin/payments/<int:payment_id>/approve", methods=["POST"])
+@admin_required
+def api_admin_payment_approve(payment_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        credits_to_grant = int(data.get("credits", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Credits must be a number."}), 400
+    try:
+        payment = accounts.review_payment(payment_id, approve=True, credits_to_grant=credits_to_grant)
+    except accounts.AuthError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"payment": payment})
+
+
+@app.route("/api/admin/payments/<int:payment_id>/reject", methods=["POST"])
+@admin_required
+def api_admin_payment_reject(payment_id):
+    try:
+        payment = accounts.review_payment(payment_id, approve=False)
+    except accounts.AuthError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"payment": payment})
+
+
 @app.route("/api/extract", methods=["POST"])
+@login_required
 def api_extract():
     """
     Accepts one or more PDF question papers - either uploaded directly, or
@@ -402,6 +648,17 @@ def api_extract():
     extraction cache first (by content hash) - only genuinely new papers
     trigger real OCR/extraction.
     """
+    user = current_user()
+    if not accounts.try_spend_credits(user["id"], accounts.EXTRACT_COST):
+        return jsonify({"error": "Not enough credits. Buy more to keep going.", "code": "no_credits"}), 402
+
+    response = app.make_response(_extract_impl())
+    if response.status_code != 200:
+        accounts.refund_credits(user["id"], accounts.EXTRACT_COST)
+    return response
+
+
+def _extract_impl():
     files = request.files.getlist("pdfs")
     library_selected = request.form.getlist("library_files")
 
@@ -448,6 +705,7 @@ def api_extract():
 
     renumber_chapter_dir(chapter_dir)
 
+
     produced = sorted(p.name for p in chapter_dir.glob("*.docx"))
     return jsonify({
         "chapters_available": produced,
@@ -457,6 +715,7 @@ def api_extract():
 
 
 @app.route("/api/download-extracted")
+@login_required
 def api_download_extracted():
     """
     Zips up every per-topic .docx file produced by the last extraction in
@@ -475,7 +734,28 @@ def api_download_extracted():
 
 
 @app.route("/api/create-test", methods=["POST"])
+@login_required
 def api_create_test():
+    """
+    Builds a combined test .docx. Spends a credit up front and refunds it
+    if the build doesn't actually succeed, so a failed attempt never costs
+    the user anything.
+    """
+    user = current_user()
+    if not accounts.try_spend_credits(user["id"], accounts.TEST_BUILD_COST):
+        return jsonify({"error": "Not enough credits. Buy more to keep going.", "code": "no_credits"}), 402
+
+    # _build_test_impl returns raw (jsonify(...), status) tuples in several
+    # places (same shape Flask views normally return) - make_response
+    # normalizes that into a real Response object so we can check the
+    # status code here before deciding whether to refund.
+    response = app.make_response(_build_test_impl())
+    if response.status_code != 200:
+        accounts.refund_credits(user["id"], accounts.TEST_BUILD_COST)
+    return response
+
+
+def _build_test_impl():
     """
     Builds a combined test .docx. Two source modes, matching the desktop app:
 
@@ -485,9 +765,9 @@ def api_create_test():
       directly (what a user would have gotten from /api/download-extracted
       earlier), then filtered down to the selected chapters.
     """
+    sdir = get_session_dir()
     source = request.form.get("source", "papers")
     selected = request.form.getlist("chapters")  # may be empty -> use everything uploaded
-    sdir = get_session_dir()
 
     scratch = sdir / f"test_build_{uuid.uuid4().hex}"
     scratch.mkdir(parents=True, exist_ok=True)
@@ -571,6 +851,7 @@ def api_create_test():
 
 
 @app.route("/api/download")
+@login_required
 def api_download():
     sdir = get_session_dir()
     output_path = sdir / "test.docx"

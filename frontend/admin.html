@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Payments Admin</title>
+<style>
+  :root {
+    --ink: #1c2430; --paper: #f7f5f0; --line: #d8d3c8;
+    --accent: #2f5d50; --accent-light: #e4ede9; --danger: #a6423a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", system-ui, -apple-system, sans-serif; background: var(--paper); color: var(--ink); }
+  header { padding: 28px 24px 8px; max-width: 900px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 1.4rem; margin: 0; }
+  main { max-width: 900px; margin: 0 auto; padding: 0 24px 64px; }
+
+  .login-box { max-width: 340px; margin: 80px auto; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 26px; }
+  .login-box h2 { margin: 0 0 14px; font-size: 1.1rem; }
+  .login-box input { width: 100%; font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; margin-bottom: 12px; box-sizing: border-box; }
+
+  button { font: inherit; border: none; border-radius: 7px; padding: 9px 16px; cursor: pointer; font-weight: 600; font-size: 0.85rem; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-danger { background: #fbe9e6; color: var(--danger); }
+  .btn-secondary { background: var(--accent-light); color: var(--accent); }
+  .btn-primary:disabled, .btn-danger:disabled { opacity: .5; cursor: not-allowed; }
+
+  .filters { display: flex; gap: 8px; margin: 18px 0; }
+  .filter-tab { padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line); font-size: 0.82rem; font-weight: 600; color: #6b7280; cursor: pointer; }
+  .filter-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 14px; }
+  .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .card-top .email { font-weight: 700; font-size: 0.95rem; }
+  .card-top .method { font-size: 0.78rem; color: #6b7280; margin-top: 2px; }
+  .pill { padding: 3px 10px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+  .pill.pending { background: #f4ecd8; color: #8a6a1f; }
+  .pill.approved { background: var(--accent-light); color: var(--accent); }
+  .pill.rejected { background: #f3e0dd; color: var(--danger); }
+
+  .card-details { margin-top: 10px; font-size: 0.85rem; color: #4a5262; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; }
+  .card-details div span { color: #8a92a0; }
+  .card-note { margin-top: 8px; font-size: 0.85rem; background: #faf8f4; padding: 8px 10px; border-radius: 6px; }
+  .proof-link { display: inline-block; margin-top: 10px; font-size: 0.82rem; color: var(--accent); font-weight: 600; text-decoration: none; }
+
+  .review-row { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
+  .review-row input[type="number"] { width: 90px; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; }
+  .empty { color: #8a92a0; font-size: 0.9rem; padding: 30px 0; text-align: center; }
+  .status { font-size: 0.85rem; margin-top: 4px; }
+  .status.error { color: var(--danger); }
+</style>
+</head>
+<body>
+
+<div class="login-box" id="loginBox">
+  <h2>Admin login</h2>
+  <input type="password" id="adminPassword" placeholder="Admin password">
+  <button class="btn-primary" id="adminLoginBtn" style="width:100%;">Log in</button>
+  <div class="status error" id="loginStatus"></div>
+</div>
+
+<div id="adminApp" style="display:none;">
+  <header>
+    <h1>Payments</h1>
+    <button class="btn-secondary" id="adminLogoutBtn">Log out</button>
+  </header>
+  <main>
+    <div class="filters">
+      <div class="filter-tab active" data-status="pending">Pending</div>
+      <div class="filter-tab" data-status="approved">Approved</div>
+      <div class="filter-tab" data-status="rejected">Rejected</div>
+      <div class="filter-tab" data-status="">All</div>
+    </div>
+    <div id="paymentsList"></div>
+  </main>
+</div>
+
+<script>
+let currentFilter = 'pending';
+
+function fmtDate(iso) {
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+
+async function checkAdminAuth() {
+  const res = await fetch('/api/admin/me');
+  const data = await res.json();
+  if (data.is_admin) {
+    document.getElementById('loginBox').style.display = 'none';
+    document.getElementById('adminApp').style.display = 'block';
+    loadPayments();
+  } else {
+    document.getElementById('loginBox').style.display = 'block';
+    document.getElementById('adminApp').style.display = 'none';
+  }
+}
+
+document.getElementById('adminLoginBtn').addEventListener('click', async () => {
+  const password = document.getElementById('adminPassword').value;
+  const status = document.getElementById('loginStatus');
+  status.textContent = '';
+  try {
+    const res = await fetch('/api/admin/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Login failed.');
+    checkAdminAuth();
+  } catch (err) {
+    status.textContent = err.message;
+  }
+});
+document.getElementById('adminPassword').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('adminLoginBtn').click();
+});
+
+document.getElementById('adminLogoutBtn').addEventListener('click', async () => {
+  await fetch('/api/admin/logout', { method: 'POST' });
+  checkAdminAuth();
+});
+
+document.querySelectorAll('.filter-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentFilter = tab.dataset.status;
+    loadPayments();
+  });
+});
+
+async function loadPayments() {
+  const list = document.getElementById('paymentsList');
+  list.innerHTML = '<div class="empty">Loading…</div>';
+  const url = currentFilter ? `/api/admin/payments?status=${currentFilter}` : '/api/admin/payments';
+  const res = await fetch(url);
+  if (!res.ok) { list.innerHTML = '<div class="empty">Could not load payments.</div>'; return; }
+  const data = await res.json();
+  const payments = data.payments || [];
+
+  if (payments.length === 0) {
+    list.innerHTML = '<div class="empty">No payments here.</div>';
+    return;
+  }
+
+  list.innerHTML = payments.map(p => `
+    <div class="card" data-id="${p.id}">
+      <div class="card-top">
+        <div>
+          <div class="email">${p.user_email}</div>
+          <div class="method">${p.method === 'easypaisa' ? 'Easypaisa' : 'Bank Transfer'} · ${fmtDate(p.created_at)}</div>
+        </div>
+        <span class="pill ${p.status}">${p.status}</span>
+      </div>
+      <div class="card-details">
+        <div><span>Amount:</span> Rs. ${p.amount || '—'}</div>
+        <div><span>Transaction ID:</span> ${p.transaction_id}</div>
+        ${p.status !== 'pending' ? `<div><span>Credits granted:</span> ${p.credits_granted}</div>` : ''}
+        ${p.reviewed_at ? `<div><span>Reviewed:</span> ${fmtDate(p.reviewed_at)}</div>` : ''}
+      </div>
+      ${p.note ? `<div class="card-note">${p.note}</div>` : ''}
+      ${p.proof_filename ? `<a class="proof-link" href="/api/admin/payments/${p.id}/proof" target="_blank" rel="noopener">View proof →</a>` : ''}
+      ${p.status === 'pending' ? `
+        <div class="review-row">
+          <input type="number" min="1" placeholder="Credits" class="credits-input" id="credits-${p.id}">
+          <button class="btn-primary approve-btn" data-id="${p.id}">Approve</button>
+          <button class="btn-danger reject-btn" data-id="${p.id}">Reject</button>
+        </div>
+        <div class="status error" id="reviewStatus-${p.id}"></div>
+      ` : ''}
+    </div>
+  `).join('');
+
+  list.querySelectorAll('.approve-btn').forEach(btn => {
+    btn.addEventListener('click', () => approvePayment(btn.dataset.id));
+  });
+  list.querySelectorAll('.reject-btn').forEach(btn => {
+    btn.addEventListener('click', () => rejectPayment(btn.dataset.id));
+  });
+}
+
+async function approvePayment(id) {
+  const creditsInput = document.getElementById(`credits-${id}`);
+  const statusEl = document.getElementById(`reviewStatus-${id}`);
+  const credits = parseInt(creditsInput.value, 10);
+  if (!credits || credits <= 0) {
+    statusEl.textContent = 'Enter how many credits to grant.';
+    return;
+  }
+  statusEl.textContent = '';
+  try {
+    const res = await fetch(`/api/admin/payments/${id}/approve`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ credits }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Approve failed.');
+    loadPayments();
+  } catch (err) {
+    statusEl.textContent = err.message;
+  }
+}
+
+async function rejectPayment(id) {
+  const statusEl = document.getElementById(`reviewStatus-${id}`);
+  try {
+    const res = await fetch(`/api/admin/payments/${id}/reject`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Reject failed.');
+    loadPayments();
+  } catch (err) {
+    statusEl.textContent = err.message;
+  }
+}
+
+checkAdminAuth();
+</script>
+
+</body>
+</html>
