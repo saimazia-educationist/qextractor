@@ -108,9 +108,71 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   hr.sep { border: none; border-top: 1px solid var(--line); margin: 22px 0; }
+
+  /* ---- Auth screen ---- */
+  #authScreen {
+    max-width: 380px; margin: 60px auto; padding: 0 24px;
+  }
+  #authScreen .panel-card {
+    background: #fff; border: 1px solid var(--line); border-radius: 10px;
+    padding: 28px 26px 30px;
+  }
+  #authScreen h2 { margin: 0 0 4px; font-size: 1.25rem; }
+  #authScreen p.hint { color: #6b7280; font-size: 0.85rem; margin: 2px 0 18px; }
+  #authScreen label { display: block; font-size: 0.85rem; font-weight: 600; margin: 14px 0 6px; }
+  #authScreen input[type="email"], #authScreen input[type="password"] {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px;
+    font: inherit; font-size: 0.92rem;
+  }
+  #authScreen .btn-primary { width: 100%; margin-top: 20px; padding: 11px; }
+  #authScreen .switch-mode {
+    text-align: center; margin-top: 16px; font-size: 0.85rem; color: #6b7280;
+  }
+  #authScreen .switch-mode a { color: var(--accent); cursor: pointer; font-weight: 600; text-decoration: none; }
+  #authScreen .status.error { margin-top: 14px; }
+
+  .account-bar {
+    max-width: 760px; margin: 0 auto; padding: 8px 24px 0;
+    display: flex; justify-content: flex-end; align-items: center; gap: 10px;
+    font-size: 0.83rem; color: #6b7280;
+  }
+  .account-bar button { padding: 6px 12px; font-size: 0.8rem; }
+  #appRoot { display: none; }
 </style>
 </head>
 <body>
+
+<!-- ================= AUTH SCREEN ================= -->
+<div id="authScreen">
+  <div class="panel-card">
+    <h2 id="authTitle">Log in</h2>
+    <p class="hint" id="authHint">Log in to extract questions and build tests.</p>
+
+    <form id="authForm">
+      <label for="authEmail">Email</label>
+      <input type="email" id="authEmail" autocomplete="username" required>
+
+      <label for="authPassword">Password</label>
+      <input type="password" id="authPassword" autocomplete="current-password" required minlength="8">
+
+      <button type="submit" class="btn-primary" id="authSubmitBtn">Log in</button>
+      <div class="status error" id="authStatus"></div>
+    </form>
+
+    <div class="switch-mode">
+      <span id="authSwitchText">Don't have an account?</span>
+      <a id="authSwitchLink">Sign up</a>
+    </div>
+  </div>
+</div>
+
+<!-- ================= MAIN APP ================= -->
+<div id="appRoot">
+
+<div class="account-bar">
+  <span id="accountEmail"></span>
+  <button class="btn-secondary" id="logoutBtn">Log out</button>
+</div>
 
 <header>
   <h1>Question Extractor</h1>
@@ -230,6 +292,8 @@
   </div>
 
 </main>
+
+</div><!-- /#appRoot -->
 
 <script>
 const PAPER_NAMES = ["Paper 1", "Paper 2", "Paper 3", "Paper 4"];
@@ -385,7 +449,98 @@ async function loadLibrary() {
   document.getElementById('extractLibraryDropdown').updateLabel();
   document.getElementById('testPdfLibraryDropdown').updateLabel();
 }
-loadLibrary();
+
+/* ---------- Auth ---------- */
+let authMode = 'login'; // 'login' | 'register'
+
+const authScreen = document.getElementById('authScreen');
+const appRoot = document.getElementById('appRoot');
+const authForm = document.getElementById('authForm');
+const authTitle = document.getElementById('authTitle');
+const authHint = document.getElementById('authHint');
+const authSubmitBtn = document.getElementById('authSubmitBtn');
+const authStatus = document.getElementById('authStatus');
+const authSwitchText = document.getElementById('authSwitchText');
+const authSwitchLink = document.getElementById('authSwitchLink');
+
+function showApp(email) {
+  authScreen.style.display = 'none';
+  appRoot.style.display = 'block';
+  document.getElementById('accountEmail').textContent = email || '';
+  loadLibrary();
+}
+
+function showAuthScreen() {
+  appRoot.style.display = 'none';
+  authScreen.style.display = 'block';
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  authStatus.textContent = '';
+  if (mode === 'login') {
+    authTitle.textContent = 'Log in';
+    authHint.textContent = 'Log in to extract questions and build tests.';
+    authSubmitBtn.textContent = 'Log in';
+    authSwitchText.textContent = "Don't have an account?";
+    authSwitchLink.textContent = 'Sign up';
+    document.getElementById('authPassword').autocomplete = 'current-password';
+  } else {
+    authTitle.textContent = 'Create an account';
+    authHint.textContent = 'At least 8 characters for your password.';
+    authSubmitBtn.textContent = 'Sign up';
+    authSwitchText.textContent = 'Already have an account?';
+    authSwitchLink.textContent = 'Log in';
+    document.getElementById('authPassword').autocomplete = 'new-password';
+  }
+}
+
+authSwitchLink.addEventListener('click', () => setAuthMode(authMode === 'login' ? 'register' : 'login'));
+
+authForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPassword').value;
+
+  authStatus.textContent = '';
+  authSubmitBtn.disabled = true;
+  try {
+    const url = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+    showApp(data.email);
+  } catch (err) {
+    authStatus.textContent = err.message;
+  } finally {
+    authSubmitBtn.disabled = false;
+  }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  showAuthScreen();
+  setAuthMode('login');
+  authForm.reset();
+});
+
+(async function checkAuth() {
+  try {
+    const res = await fetch('/api/auth/me');
+    const data = await res.json();
+    if (data.authenticated) {
+      showApp(data.email);
+    } else {
+      showAuthScreen();
+    }
+  } catch {
+    showAuthScreen();
+  }
+})();
 
 /* ---------- Extract panel ---------- */
 const extractZone = wireDropzone('extractDropzone', 'extractFileInput', 'extractFileList', '.pdf', updateExtractBtn);

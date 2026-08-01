@@ -13,11 +13,14 @@ import uuid
 import shutil
 import hashlib
 import logging
+import sqlite3
 import threading
 import time
+from functools import wraps
 from pathlib import Path
 
 from flask import Flask, request, jsonify, send_file, session
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from question_extractor import (
     extract_questions,
@@ -76,11 +79,56 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 PAPER_NAMES = ["Paper 1", "Paper 2", "Paper 3", "Paper 4"]
 
 
+# --- Accounts (email + password login) -------------------------------------
+# A tiny SQLite table is enough here - just email + salted/hashed password.
+# Lives in DATA_ROOT so it survives redeploys the same way the workdir does.
+USERS_DB_PATH = DATA_ROOT / "users.db"
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def get_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(USERS_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_db()
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+init_db()
+
+
+def login_required(view):
+    """Blocks an API route unless the browser has a logged-in session."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            return jsonify({"error": "Please log in first."}), 401
+        return view(*args, **kwargs)
+    return wrapped
+
+
 def get_session_dir() -> Path:
-    """Each visitor gets a private folder, identified by a cookie session id."""
-    if "sid" not in session:
-        session["sid"] = uuid.uuid4().hex
-    sdir = WORKDIR / session["sid"]
+    """
+    Each logged-in user gets a private folder, keyed by their account id
+    (rather than a random per-browser id), so their in-progress/extracted
+    files carry over even if they log in from a different browser/device.
+    """
+    uid = session.get("user_id")
+    sdir = WORKDIR / f"user_{uid}"
     sdir.mkdir(exist_ok=True)
     return sdir
 
@@ -292,6 +340,7 @@ def _run_extraction_job(job_id: str, saved_paths, chapter_dir: Path):
 
 
 @app.route("/api/extract/start", methods=["POST"])
+@login_required
 def api_extract_start():
     """
     Saves the uploaded/selected PDFs (fast) and starts real extraction in a
@@ -362,6 +411,7 @@ def api_extract_start():
 
 
 @app.route("/api/extract/status/<job_id>")
+@login_required
 def api_extract_status(job_id):
     with EXTRACTION_JOBS_LOCK:
         job = EXTRACTION_JOBS.get(job_id)
@@ -372,6 +422,7 @@ def api_extract_status(job_id):
 
 
 @app.route("/api/library")
+@login_required
 def api_library():
     """
     Lists question papers (qp) the site owner has placed in papers_library/,
@@ -387,13 +438,80 @@ def api_library():
     return jsonify({"papers": papers})
 
 
+@app.route("/api/auth/register", methods=["POST"])
+def api_register():
+    """Creates a new account and immediately logs the browser in."""
+    data = request.get_json(silent=True) or request.form
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+
+    if not EMAIL_RE.match(email):
+        return jsonify({"error": "Please enter a valid email address."}), 400
+    if len(password) < 8:
+        return jsonify({"error": "Password must be at least 8 characters."}), 400
+
+    conn = get_db()
+    try:
+        if conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone():
+            return jsonify({"error": "An account with that email already exists."}), 400
+        conn.execute(
+            "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
+            (email, generate_password_hash(password), time.strftime("%Y-%m-%d %H:%M:%S")),
+        )
+        conn.commit()
+        user = conn.execute("SELECT id, email FROM users WHERE email = ?", (email,)).fetchone()
+    finally:
+        conn.close()
+
+    session.clear()
+    session["user_id"] = user["id"]
+    session["email"] = user["email"]
+    return jsonify({"ok": True, "email": user["email"]})
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_login():
+    """Logs an existing account in."""
+    data = request.get_json(silent=True) or request.form
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+
+    conn = get_db()
+    user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    conn.close()
+
+    if not user or not check_password_hash(user["password_hash"], password):
+        return jsonify({"error": "Incorrect email or password."}), 401
+
+    session.clear()
+    session["user_id"] = user["id"]
+    session["email"] = user["email"]
+    return jsonify({"ok": True, "email": user["email"]})
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/me")
+def api_me():
+    """Lets the frontend check on page load whether this browser is logged in."""
+    if session.get("user_id"):
+        return jsonify({"authenticated": True, "email": session.get("email")})
+    return jsonify({"authenticated": False})
+
+
 @app.route("/api/chapters")
+@login_required
 def api_chapters():
     """Returns available chapter names for every paper, for the selection UI."""
     return jsonify({paper: get_chapter_list(paper) for paper in PAPER_NAMES})
 
 
 @app.route("/api/extract", methods=["POST"])
+@login_required
 def api_extract():
     """
     Accepts one or more PDF question papers - either uploaded directly, or
@@ -457,6 +575,7 @@ def api_extract():
 
 
 @app.route("/api/download-extracted")
+@login_required
 def api_download_extracted():
     """
     Zips up every per-topic .docx file produced by the last extraction in
@@ -475,6 +594,7 @@ def api_download_extracted():
 
 
 @app.route("/api/create-test", methods=["POST"])
+@login_required
 def api_create_test():
     """
     Builds a combined test .docx. Two source modes, matching the desktop app:
@@ -571,6 +691,7 @@ def api_create_test():
 
 
 @app.route("/api/download")
+@login_required
 def api_download():
     sdir = get_session_dir()
     output_path = sdir / "test.docx"
@@ -580,6 +701,7 @@ def api_download():
 
 
 @app.route("/api/reset", methods=["POST"])
+@login_required
 def api_reset():
     """Clears this session's working files so the user can start fresh."""
     sdir = get_session_dir()
