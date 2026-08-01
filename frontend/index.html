@@ -376,7 +376,6 @@ async function loadChaptersData() {
   chaptersByPaper = await res.json();
   renderChaptersForSelectedPaper(); // shows the "select a paper" placeholder initially
 }
-loadChaptersData();
 
 /* ---------- Generic dropzone wiring ---------- */
 function wireDropzone(zoneId, inputId, listId, accept, onChange) {
@@ -468,6 +467,7 @@ function showApp(email) {
   appRoot.style.display = 'block';
   document.getElementById('accountEmail').textContent = email || '';
   loadLibrary();
+  loadChaptersData();
 }
 
 function showAuthScreen() {
